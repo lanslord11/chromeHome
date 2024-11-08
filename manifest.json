@@ -1,0 +1,18 @@
+
+
+
+{
+    "manifest_version": 3,
+    "name": "Chrome Home ( ReactV )",
+    "version": "1.0",
+    "description": "Overrides the new tab page with a custom design",
+    "chrome_url_overrides": {
+      "newtab": "index.html"
+    },
+    "permissions": [
+      "bookmarks"
+    ],
+    "content_security_policy": {
+      "extension_pages": "script-src 'self'; object-src 'self'"
+    }
+  }
