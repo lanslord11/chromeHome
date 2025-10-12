@@ -1,47 +1,142 @@
 import React from "react";
 
-import { Bookmark, ChevronRight, Folder, Star } from "lucide-react";
+import {
+  Bookmark,
+  ChevronRight,
+  Folder,
+  Star,
+  Plus,
+  X,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom";
 
+const Modal = ({ isOpen, onClose, children }) => {
+  if (!isOpen) return null;
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-[#1a2942] rounded-lg p-6 w-full max-w-md relative">
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 text-[#ccd6f6] hover:text-[#bd93f9]"
+        >
+          <X className="w-5 h-5" />
+        </button>
+        {children}
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+const ConfirmDeleteModal = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  itemName,
+  itemType,
+}) => {
+  if (!isOpen) return null;
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-[#1a2942] rounded-lg p-6 w-full max-w-md">
+        <h3 className="text-lg font-semibold text-[#ccd6f6] mb-4">
+          Confirm Delete
+        </h3>
+        <p className="text-[#ccd6f6] mb-6">
+          Are you sure you want to delete {itemType} "{itemName}"?
+          {itemType === "folder" &&
+            " This will delete all contents inside the folder."}
+        </p>
+        <div className="flex justify-end space-x-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-[#ccd6f6] hover:text-[#bd93f9]"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+const ContextMenu = ({ x, y, onClose, options }) => {
+  return ReactDOM.createPortal(
+    <div
+      className="fixed bg-[#1a2942] rounded-md shadow-lg py-1 z-50"
+      style={{ top: `${y}px`, left: `${x}px` }}
+    >
+      {options.map((option, index) => (
+        <button
+          key={index}
+          className={`w-full px-4 py-2 text-left flex items-center space-x-2 ${
+            option.destructive
+              ? "text-red-400 hover:bg-red-500/20"
+              : "text-[#ccd6f6] hover:bg-[#bd93f9]/20"
+          }`}
+          onClick={() => {
+            option.onClick();
+            onClose();
+          }}
+        >
+          {option.icon && <span>{option.icon}</span>}
+          <span>{option.label}</span>
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+};
+
 const transformBrowserBookmarks = (browserBookmarks) => {
-    function transform(node) {
-      const result = {
-        id: node.id,
-        name: node.title,
-        type: node.url ? "bookmark" : "folder",
-        children: {},
-      };
-  
-      if (node.url) {
-        result.type = "bookmark";
-        result.url = node.url;
-      } else {
-        result.type = "folder";
-        if (node.children) {
-          node.children.forEach((child) => {
-            // Use the title as the key for easier navigation
-            result.children[child.title] = transform(child);
-          });
-        }
-      }
-  
-      return result;
-    }
-  
-    // Create root node to match our data structure
-    return {
-      root: {
-        id: "root",
-        name: "Bookmarks",
-        type: "folder",
-        children: browserBookmarks[0].children.reduce((acc, child) => {
-          acc[child.title] = transform(child);
-          return acc;
-        }, {}),
-      },
+  function transform(node) {
+    const result = {
+      id: node.id,
+      name: node.title,
+      type: node.url ? "bookmark" : "folder",
+      children: {},
     };
+
+    if (node.url) {
+      result.type = "bookmark";
+      result.url = node.url;
+    } else {
+      result.type = "folder";
+      if (node.children) {
+        node.children.forEach((child) => {
+          // Use the title as the key for easier navigation
+          result.children[child.title] = transform(child);
+        });
+      }
+    }
+
+    return result;
+  }
+
+  // Create root node to match our data structure
+  return {
+    root: {
+      id: "root",
+      name: "Bookmarks",
+      type: "folder",
+      children: browserBookmarks[0].children.reduce((acc, child) => {
+        acc[child.title] = transform(child);
+        return acc;
+      }, {}),
+    },
   };
+};
 
 const Tooltip = ({ children, target }) => {
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -83,12 +178,234 @@ const Tooltip = ({ children, target }) => {
 };
 
 const BookMarks = () => {
+  const [draggedItem, setDraggedItem] = useState(null);
+
   const [currentPath, setCurrentPath] = useState(["root"]);
   const [loading, setLoading] = useState(true);
 
   const [bookmarkData, setBookmarkData] = useState(null);
   const tooltipRefs = useRef({});
   const [activeTooltip, setActiveTooltip] = useState(null);
+
+  const [contextMenu, setContextMenu] = useState(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createMode, setCreateMode] = useState(null); // 'folder' or 'bookmark'
+  const [newItemData, setNewItemData] = useState({ title: "", url: "" });
+
+  const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] =
+    useState(false);
+  const [deleteItem, setDeleteItem] = useState(null);
+
+  const handleDragStart = (e, item, type) => {
+    e.dataTransfer.setData(
+      "text/plain",
+      JSON.stringify({
+        id: item.id,
+        name: item.name,
+        type,
+      })
+    );
+    setDraggedItem({ ...item, type });
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault(); // Allow dropping
+  };
+
+  const handleDropOnFolder = async (e, targetFolder) => {
+    e.preventDefault();
+    if (!draggedItem) return;
+
+    try {
+      // Prevent dropping an item into itself or its children
+      if (draggedItem.id === targetFolder.id) return;
+
+      // Move bookmark or folder
+      if (draggedItem.type === "bookmark") {
+        await chrome.bookmarks.move(draggedItem.id, {
+          parentId: targetFolder.id,
+        });
+      } else if (draggedItem.type === "folder") {
+        await chrome.bookmarks.move(draggedItem.id, {
+          parentId: targetFolder.id,
+        });
+      }
+
+      // Refresh bookmarks
+      chrome.bookmarks.getTree((tree) => {
+        const transformedData = transformBrowserBookmarks(tree);
+        setBookmarkData(transformedData);
+      });
+
+      setDraggedItem(null);
+    } catch (error) {
+      console.error("Error moving item:", error);
+    }
+  };
+
+  const handleDropOnNavigation = async (e, targetIndex) => {
+    e.preventDefault();
+    if (!draggedItem) return;
+
+    try {
+      // Find the correct parent to move the item to
+      const navigationPath = currentPath.slice(0, targetIndex + 1);
+      let parentFolder = bookmarkData.root;
+
+      for (let i = 1; i < navigationPath.length; i++) {
+        parentFolder = parentFolder.children[navigationPath[i]];
+      }
+
+      // Move bookmark or folder
+      await chrome.bookmarks.move(draggedItem.id, {
+        parentId: parentFolder.id,
+      });
+
+      // Refresh bookmarks and update current path
+      chrome.bookmarks.getTree((tree) => {
+        const transformedData = transformBrowserBookmarks(tree);
+        setBookmarkData(transformedData);
+
+        // Update current path to reflect the new location
+        setCurrentPath(navigationPath);
+      });
+
+      setDraggedItem(null);
+    } catch (error) {
+      console.error("Error moving item:", error);
+    }
+  };
+
+  const handleDeleteItem = async () => {
+    if (!deleteItem) return;
+    try {
+      if (deleteItem.type === "bookmark") {
+        // Delete specific bookmark
+        await chrome.bookmarks.remove(deleteItem.id);
+      } else if (deleteItem.type === "folder") {
+        // Recursively remove folder and all its contents
+        await chrome.bookmarks.removeTree(deleteItem.id);
+      }
+
+      // Refresh bookmarks
+      chrome.bookmarks.getTree((tree) => {
+        const transformedData = transformBrowserBookmarks(tree);
+        setBookmarkData(transformedData);
+
+        // If the deleted item was in the current path, navigate back
+        if (currentPath.includes(deleteItem.name)) {
+          setCurrentPath(["root"]);
+        }
+      });
+
+      // Close modals and reset state
+      setIsConfirmDeleteModalOpen(false);
+      setDeleteItem(null);
+    } catch (error) {
+      console.error("Error deleting item:", error);
+    }
+  };
+
+  const handleContextMenu = (e, item) => {
+    e.preventDefault();
+
+    const options = [];
+
+    if (item.type === "folder") {
+      options.push(
+        {
+          label: "New Bookmark",
+          onClick: () => {
+            setCreateMode("bookmark");
+            setIsCreateModalOpen(true);
+          },
+          icon: <Plus className="w-4 h-4" />,
+        },
+        {
+          label: "New Folder",
+          onClick: () => {
+            setCreateMode("folder");
+            setIsCreateModalOpen(true);
+          },
+          icon: <Folder className="w-4 h-4" />,
+        },
+        {
+          label: "Delete Folder",
+          onClick: () => {
+            setDeleteItem({
+              id: item.id,
+              name: item.name,
+              type: "folder",
+            });
+            setIsConfirmDeleteModalOpen(true);
+          },
+          icon: <Trash2 className="w-4 h-4" />,
+          destructive: true,
+        }
+      );
+    } else if (item.type === "bookmark") {
+      options.push({
+        label: "Delete Bookmark",
+        onClick: () => {
+          setDeleteItem({
+            id: item.id,
+            name: item.name,
+            type: "bookmark",
+          });
+          setIsConfirmDeleteModalOpen(true);
+        },
+        icon: <Trash2 className="w-4 h-4" />,
+        destructive: true,
+      });
+    }
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      options,
+    });
+  };
+
+  const handleCreateItem = async () => {
+    const currentFolder = getCurrentFolder();
+
+    try {
+      if (createMode === "bookmark") {
+        const newBookmark = await chrome.bookmarks.create({
+          parentId: currentFolder.id,
+          title: newItemData.title,
+          url: newItemData.url,
+        });
+        console.log("Created bookmark:", newBookmark);
+      } else if (createMode === "folder") {
+        const newFolder = await chrome.bookmarks.create({
+          parentId: currentFolder.id,
+          title: newItemData.title,
+        });
+        console.log("Created folder:", newFolder);
+      }
+
+      // Refresh bookmarks
+      chrome.bookmarks.getTree((tree) => {
+        const transformedData = transformBrowserBookmarks(tree);
+        setBookmarkData(transformedData);
+      });
+
+      setIsCreateModalOpen(false);
+      setNewItemData({ title: "", url: "" });
+    } catch (error) {
+      console.error("Error creating item:", error);
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setContextMenu(null);
+    };
+
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, []);
 
   const getPathNames = () => {
     if (!bookmarkData) return [];
@@ -156,7 +473,7 @@ const BookMarks = () => {
   }, []);
 
   return (
-    <>
+    <div onContextMenu={handleContextMenu}>
       {loading ? (
         <div className="flex items-center justify-center h-full">
           <span className="text-[#ccd6f6]">Loading bookmarks...</span>
@@ -164,26 +481,47 @@ const BookMarks = () => {
       ) : (
         <>
           {/* Header */}
-          <div className="flex items-center space-x-2 mb-4">
-            <Bookmark className="w-6 h-6 text-[#bd93f9]" />
-            <h2 className="text-xl font-bold text-[#ccd6f6]">
-              Stellar Bookmarks
-            </h2>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-2">
+              <Bookmark className="w-6 h-6 text-[#bd93f9]" />
+              <h2 className="text-xl font-bold text-[#ccd6f6]">
+                Stellar Bookmarks
+              </h2>
+            </div>
+            <button
+              onClick={() => {
+                setCreateMode("bookmark");
+                setIsCreateModalOpen(true);
+              }}
+              className="flex items-center space-x-2 px-3 py-1 rounded-md bg-[#bd93f9]/20 text-[#bd93f9] hover:bg-[#bd93f9]/30"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add</span>
+            </button>
           </div>
 
           {/* Path Navigation */}
-          <div className="flex items-center space-x-2 mb-4 bg-[#1a2942] p-2 rounded-md overflow-x-auto">
+          <div
+            className="flex items-center space-x-2 mb-4 bg-[#1a2942] p-2 rounded-md overflow-x-auto"
+            onDragOver={handleDragOver}
+          >
             {pathNames.map((item, index) => (
               <React.Fragment key={item.id}>
-                <button
-                  onClick={() => navigateTo(index)}
-                  className="text-[#ccd6f6] hover:text-[#bd93f9] transition-colors duration-300 whitespace-nowrap"
+                <div
+                  onDrop={(e) => handleDropOnNavigation(e, index)}
+                  onDragOver={handleDragOver}
+                  className="flex items-center"
                 >
-                  {item.name}
-                </button>
-                {index < pathNames.length - 1 && (
-                  <ChevronRight className="w-4 h-4 text-[#bd93f9] flex-shrink-0" />
-                )}
+                  <button
+                    onClick={() => navigateTo(index)}
+                    className="text-[#ccd6f6] hover:text-[#bd93f9] transition-colors duration-300 whitespace-nowrap"
+                  >
+                    {item.name}
+                  </button>
+                  {index < pathNames.length - 1 && (
+                    <ChevronRight className="w-4 h-4 text-[#bd93f9] flex-shrink-0" />
+                  )}
+                </div>
               </React.Fragment>
             ))}
           </div>
@@ -191,25 +529,22 @@ const BookMarks = () => {
           {/* Content Area */}
           <div className="flex-grow overflow-y-auto pr-2">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-              {/* Folders */}
+              {/* Folders - Now draggable and droppable */}
               {Object.entries(currentFolder?.children || {})
                 .filter(([_, item]) => item.type === "folder")
                 .map(([name, folder]) => (
                   <div
                     key={folder.id}
                     className="relative group"
-                    onMouseEnter={() => {
-                      tooltipRefs.current[folder.id] = React.createRef();
-                      setActiveTooltip({
-                        id: folder.id,
-                        name: folder.name,
-                        ref: tooltipRefs.current[folder.id],
-                      });
-                    }}
-                    onMouseLeave={() => setActiveTooltip(null)}
+                    onContextMenu={(e) =>
+                      handleContextMenu(e, { ...folder, name })
+                    }
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDropOnFolder(e, folder)}
                   >
                     <button
-                      ref={tooltipRefs.current[folder.id]}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, folder, "folder")}
                       onClick={() => enterFolder(name)}
                       className="w-full flex items-center space-x-2 p-3 rounded-md hover:bg-[#bd93f9]/20 transition-all duration-300"
                     >
@@ -221,26 +556,23 @@ const BookMarks = () => {
                   </div>
                 ))}
 
-              {/* Bookmarks */}
+              {/* Bookmarks - Now draggable */}
               {Object.entries(currentFolder?.children || {})
                 .filter(([_, item]) => item.type === "bookmark")
                 .map(([_, bookmark]) => (
                   <div
                     key={bookmark.id}
                     className="relative group"
-                    onMouseEnter={() => {
-                      tooltipRefs.current[bookmark.id] = React.createRef();
-                      setActiveTooltip({
-                        id: bookmark.id,
-                        name: bookmark.name,
-                        ref: tooltipRefs.current[bookmark.id],
-                      });
-                    }}
-                    onMouseLeave={() => setActiveTooltip(null)}
+                    onContextMenu={(e) => handleContextMenu(e, bookmark)}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDropOnFolder(e, currentFolder)}
                   >
                     <a
                       href={bookmark.url}
-                      ref={tooltipRefs.current[bookmark.id]}
+                      draggable
+                      onDragStart={(e) =>
+                        handleDragStart(e, bookmark, "bookmark")
+                      }
                       className="w-full flex items-center space-x-2 p-3 rounded-md hover:bg-[#bd93f9]/20 transition-all duration-300"
                     >
                       <Star className="w-5 h-5 text-[#bd93f9] flex-shrink-0" />
@@ -253,13 +585,94 @@ const BookMarks = () => {
             </div>
           </div>
 
+          <ConfirmDeleteModal
+            isOpen={isConfirmDeleteModalOpen}
+            onClose={() => {
+              setIsConfirmDeleteModalOpen(false);
+              setDeleteItem(null);
+            }}
+            onConfirm={handleDeleteItem}
+            itemName={deleteItem?.name}
+            itemType={deleteItem?.type}
+          />
+
+          {/* Context Menu */}
+          {contextMenu && (
+            <ContextMenu
+              x={contextMenu.x}
+              y={contextMenu.y}
+              options={contextMenu.options}
+              onClose={() => setContextMenu(null)}
+            />
+          )}
+
+          {/* Create Modal */}
+          <Modal
+            isOpen={isCreateModalOpen}
+            onClose={() => {
+              setIsCreateModalOpen(false);
+              setNewItemData({ title: "", url: "" });
+            }}
+          >
+            <h3 className="text-lg font-semibold text-[#ccd6f6] mb-4">
+              Create New {createMode === "folder" ? "Folder" : "Bookmark"}
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-[#ccd6f6] mb-1">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  value={newItemData.title}
+                  onChange={(e) =>
+                    setNewItemData({ ...newItemData, title: e.target.value })
+                  }
+                  className="w-full px-3 py-2 bg-[#283c5f] text-[#ccd6f6] rounded-md focus:outline-none focus:ring-2 focus:ring-[#bd93f9]"
+                />
+              </div>
+              {createMode === "bookmark" && (
+                <div>
+                  <label className="block text-sm text-[#ccd6f6] mb-1">
+                    URL
+                  </label>
+                  <input
+                    type="url"
+                    value={newItemData.url}
+                    onChange={(e) =>
+                      setNewItemData({ ...newItemData, url: e.target.value })
+                    }
+                    className="w-full px-3 py-2 bg-[#283c5f] text-[#ccd6f6] rounded-md focus:outline-none focus:ring-2 focus:ring-[#bd93f9]"
+                  />
+                </div>
+              )}
+              <div className="flex justify-end space-x-3 mt-6">
+                <button
+                  onClick={() => {
+                    setIsCreateModalOpen(false);
+                    setNewItemData({ title: "", url: "" });
+                  }}
+                  className="px-4 py-2 text-[#ccd6f6] hover:text-[#bd93f9]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateItem}
+                  className="px-4 py-2 bg-[#bd93f9] text-white rounded-md hover:bg-[#bd93f9]/90"
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </Modal>
+
           {/* Tooltip Portal */}
           {activeTooltip && (
             <Tooltip target={activeTooltip.ref}>{activeTooltip.name}</Tooltip>
           )}
         </>
       )}
-    </>
+    </div>
   );
 };
 

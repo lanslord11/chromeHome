@@ -8,6 +8,9 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, useCallback } from "react";
 
+const CACHE_KEY = 'hackathonsCache';
+const CACHE_DURATION = 60 * 60 * 1000; 
+
 const Hackathons = () => {
   const [hackathons, setHackathons] = useState([]);
   const [hackathonLoading, setHackathonLoading] = useState(true);
@@ -109,36 +112,84 @@ const Hackathons = () => {
     return () => clearInterval(intervalId);
   }, [isHovering, hackathons.length]);
 
+  const getCachedHackathons = () => {
+    const cachedData = localStorage.getItem(CACHE_KEY);
+    if (cachedData) {
+      const { data, timestamp } = JSON.parse(cachedData);
+      const isExpired = Date.now() - timestamp > CACHE_DURATION;
+      if (!isExpired) {
+        return data;
+      }
+    }
+    return null;
+  };
+
+  const setCachedHackathons = (data) => {
+    const cacheData = {
+      data,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+  };
+  const transformHackathonData = (data) => {
+    return data.map((hackathon) => ({
+      id: hackathon.id,
+      title: hackathon.title,
+      location: hackathon.location,
+      time_left_to_submission: hackathon.time_left_to_submission,
+      dates: hackathon.dates,
+      url: hackathon.url,
+      prize: hackathon.prize_amount
+        ? hackathon.prize_amount.replace(/<[^>]*>/g, "")
+        : "Not specified",
+      organization: hackathon.organization,
+      themes: hackathon.themes,
+    }));
+  };
+
+  const fetchHackathons = async () => {
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_CHROME_HOME_SERVER_URL}/hackathons`
+      );
+      if (!response.ok) throw new Error("Failed to fetch hackathons");
+      const data = await response.json();
+      const transformedData = transformHackathonData(data);
+      
+      setHackathons(transformedData);
+      setCachedHackathons(transformedData);
+      setHackathonLoading(false);
+      return transformedData;
+    } catch (err) {
+      setHackathonError(err.message);
+      setHackathonLoading(false);
+      throw err;
+    }
+  };
+
   useEffect(() => {
-    const fetchHackathons = async () => {
-      try {
-        const response = await fetch("http://localhost:3000/api/hackathons");
-        if (!response.ok) throw new Error("Failed to fetch hackathons");
-        const data = await response.json();
-
-        // Transform the API data to match our needs
-        const transformedData = data.map((hackathon) => ({
-          id: hackathon.id,
-          title: hackathon.title,
-          location: hackathon.location,
-          time_left_to_submission: hackathon.time_left_to_submission,
-          dates: hackathon.dates,
-          prize: hackathon.prize_amount
-            ? hackathon.prize_amount.replace(/<[^>]*>/g, "")
-            : "Not specified",
-          organization: hackathon.organization,
-          themes: hackathon.themes,
-        }));
-
-        setHackathons(transformedData);
+    const loadHackathons = async () => {
+      const cachedHackathons = getCachedHackathons();
+      if (cachedHackathons) {
+        setHackathons(cachedHackathons);
         setHackathonLoading(false);
-      } catch (err) {
-        setHackathonError(err.message);
-        setHackathonLoading(false);
+        
+        // Update cache in background
+        try {
+          await fetchHackathons();
+        } catch (error) {
+          console.error("Background cache update failed:", error);
+        }
+      } else {
+        try {
+          await fetchHackathons();
+        } catch (error) {
+          console.error("Initial fetch failed:", error);
+        }
       }
     };
 
-    fetchHackathons();
+    loadHackathons();
   }, []);
 
   return (
@@ -146,7 +197,7 @@ const Hackathons = () => {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-2">
           <Calendar className="w-6 h-6 text-[#50fa7b]" />
-          <h2 className="text-xl font-bold text-[#ccd6f6]">
+          <h2 className="text-xl font-bold text-[#ccd6f6]" >
             Upcoming Hackathons
           </h2>
         </div>
@@ -183,7 +234,7 @@ const Hackathons = () => {
           onWheel={handleWheel}
         >
           {hackathons.map((hackathon) => (
-            <HackathonCard key={hackathon.id} hackathon={hackathon} />
+            <HackathonCard key={hackathon.id} hackathon={hackathon}  />
           ))}
         </div>
       )}
