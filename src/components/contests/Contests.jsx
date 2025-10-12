@@ -2,24 +2,96 @@ import React from "react";
 import { Code } from "lucide-react";
 import { useEffect, useState } from "react";
 
+const CACHE_KEY = 'contestsCache';
+const CACHE_DURATION = 15 * 60 * 1000;
+
 const Contests = () => {
   const [contests, setContests] = useState([]);
   const [isFetching, setIsFetching] = useState(true);
+  const [error, setError] = useState(null);
+
+  const getCachedContests = () => {
+    const cachedData = localStorage.getItem(CACHE_KEY);
+    if (cachedData) {
+      const { data, timestamp } = JSON.parse(cachedData);
+      const isExpired = Date.now() - timestamp > CACHE_DURATION;
+      if (!isExpired) {
+        return data;
+      }
+    }
+    return null;
+  };
+
+  const setCachedContests = (data) => {
+    const cacheData = {
+      data,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+  };
+
+  const fetchContests = async () => {
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_CHROME_HOME_SERVER_URL}/contests`,
+        {
+          method: "GET",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch contests');
+      }
+
+      const data = await response.json();
+      setContests(data);
+      setCachedContests(data);
+      return data;
+    } catch (error) {
+      setError(error.message);
+      throw error;
+    } finally {
+      setIsFetching(false);
+    }
+  };
+
 
   useEffect(() => {
-    const fetchContests = async () => {
-      try {
-        const response = await fetch("http://localhost:3000/api/contests");
-        const data = await response.json();
-        setContests(data);
-      } catch (error) {
-        console.error("Error fetching contests:", error);
-      } finally {
+    const loadContests = async () => {
+      // Try to load from cache first
+      const cachedContests = getCachedContests();
+      if (cachedContests) {
+        setContests(cachedContests);
         setIsFetching(false);
+        
+        // Update cache in background
+        try {
+          await fetchContests();
+        } catch (error) {
+          console.error("Background cache update failed:", error);
+        }
+      } else {
+        // No cache, fetch directly
+        try {
+          await fetchContests();
+        } catch (error) {
+          console.error("Initial fetch failed:", error);
+        }
       }
     };
 
-    fetchContests();
+    loadContests();
+
+    // Optional: Set up periodic background refresh
+    const refreshInterval = setInterval(() => {
+      fetchContests().catch(console.error);
+    }, CACHE_DURATION);
+
+    return () => clearInterval(refreshInterval);
   }, []);
 
   const formatDate = (timestamp) => {

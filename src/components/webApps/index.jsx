@@ -87,7 +87,6 @@ const webApps = [
   },
 ];
 
-LeetCodeIcon
 
 const WebApps = () => {
   const controls = useAnimation();
@@ -169,4 +168,3 @@ const WebApps = () => {
 };
 
 export default WebApps;
-// I want that whenever we rigt click in the content area of book marks , I would have option of creating a bookmark , if I right click on a folder inside the content area i get an option of deleting bookmakr folder , if I right click on a book makr i get an option to delete bookmark , 
