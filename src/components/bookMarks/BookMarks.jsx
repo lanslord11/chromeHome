@@ -1,4 +1,6 @@
+
 import React from "react";
+import fuzzysort from "fuzzysort";
 
 import {
   Bookmark,
@@ -177,24 +179,76 @@ const Tooltip = ({ children, target }) => {
   );
 };
 
-const BookMarks = () => {
-  const [draggedItem, setDraggedItem] = useState(null);
 
+const BookMarks = () => {
+  // All hooks must be declared at the top
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchInputRef = useRef(null);
+  const [draggedItem, setDraggedItem] = useState(null);
   const [currentPath, setCurrentPath] = useState(["root"]);
   const [loading, setLoading] = useState(true);
-
   const [bookmarkData, setBookmarkData] = useState(null);
   const tooltipRefs = useRef({});
   const [activeTooltip, setActiveTooltip] = useState(null);
-
   const [contextMenu, setContextMenu] = useState(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [createMode, setCreateMode] = useState(null); // 'folder' or 'bookmark'
   const [newItemData, setNewItemData] = useState({ title: "", url: "" });
-
-  const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] =
-    useState(false);
+  const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] = useState(false);
   const [deleteItem, setDeleteItem] = useState(null);
+
+  // Helper: Flatten bookmarks/folders for search
+  const flattenBookmarks = (node, path = []) => {
+    let items = [];
+    if (!node) return items;
+    if (node.type === "bookmark") {
+      items.push({
+        id: node.id,
+        name: node.name,
+        url: node.url,
+        type: "bookmark",
+        path: [...path],
+      });
+    } else if (node.type === "folder") {
+      items.push({
+        id: node.id,
+        name: node.name,
+        type: "folder",
+        path: [...path],
+      });
+      if (node.children) {
+        Object.values(node.children).forEach(child => {
+          items = items.concat(flattenBookmarks(child, [...path, node.name]));
+        });
+      }
+    }
+    return items;
+  };
+
+  // Fuzzy search logic
+  React.useEffect(() => {
+    if (!searchQuery || !bookmarkData) {
+      setSearchResults([]);
+      return;
+    }
+    const allItems = flattenBookmarks(bookmarkData.root);
+    // Search by name and url (for bookmarks)
+    const results = fuzzysort.go(
+      searchQuery,
+      allItems,
+      {
+        keys: [
+          "name",
+          item => (item.type === "bookmark" ? item.url : "")
+        ],
+        limit: 5,
+        threshold: -10000,
+      }
+    );
+    setSearchResults(results.map(r => r.obj));
+  }, [searchQuery, bookmarkData]);
 
   const handleDragStart = (e, item, type) => {
     e.dataTransfer.setData(
@@ -473,7 +527,7 @@ const BookMarks = () => {
   }, []);
 
   return (
-    <div onContextMenu={handleContextMenu}>
+    <div onContextMenu={handleContextMenu} className="flex flex-col h-full min-h-0">
       {loading ? (
         <div className="flex items-center justify-center h-full">
           <span className="text-[#ccd6f6]">Loading bookmarks...</span>
@@ -481,29 +535,98 @@ const BookMarks = () => {
       ) : (
         <>
           {/* Header */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center space-x-2">
-              <Bookmark className="w-6 h-6 text-[#bd93f9]" />
-              <h2 className="text-xl font-bold text-[#ccd6f6]">
-                Stellar Bookmarks
-              </h2>
+          <div className="flex flex-col gap-2 mb-2 flex-shrink-0">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Bookmark className="w-6 h-6 text-[#bd93f9]" />
+                <h2 className="text-xl font-bold text-[#ccd6f6]">
+                  Stellar Bookmarks
+                </h2>
+              </div>
+              <button
+                onClick={() => {
+                  setCreateMode("bookmark");
+                  setIsCreateModalOpen(true);
+                }}
+                className="flex items-center space-x-2 px-3 py-1 rounded-md bg-[#bd93f9]/20 text-[#bd93f9] hover:bg-[#bd93f9]/30"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add</span>
+              </button>
             </div>
-            <button
-              onClick={() => {
-                setCreateMode("bookmark");
-                setIsCreateModalOpen(true);
-              }}
-              className="flex items-center space-x-2 px-3 py-1 rounded-md bg-[#bd93f9]/20 text-[#bd93f9] hover:bg-[#bd93f9]/30"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add</span>
-            </button>
+            {/* Search Input */}
+            <div className="relative">
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onFocus={() => setShowDropdown(true)}
+                onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
+                placeholder="Search bookmarks or folders..."
+                className="w-full px-3 py-2 bg-[#283c5f] text-[#ccd6f6] rounded-md focus:outline-none focus:ring-2 focus:ring-[#bd93f9] placeholder:text-[#7b8bbd]"
+                autoComplete="off"
+              />
+              {/* Search Results Dropdown */}
+              {showDropdown && searchQuery && searchResults.length > 0 && (
+                <div className="absolute left-0 right-0 mt-1 bg-[#1a2942] border border-[#283c5f] rounded-md shadow-lg z-50 max-h-64 overflow-y-auto">
+                  {searchResults.map((item, idx) => (
+                    <button
+                      key={item.id}
+                      className="w-full flex items-center px-3 py-2 text-left hover:bg-[#bd93f9]/20 text-[#ccd6f6] space-x-2"
+                      onMouseDown={e => {
+                        e.preventDefault();
+                        if (item.type === "bookmark") {
+                          window.open(item.url, "_blank");
+                        } else if (item.type === "folder") {
+                          // Find the path to this folder and navigate
+                          // item.path is an array of folder names leading to this folder
+                          // item.name is the folder name
+                          // Find the path in the data structure
+                          if (bookmarkData) {
+                            // Find the path as array of keys for setCurrentPath
+                            let pathArr = ["root"];
+                            let current = bookmarkData.root;
+                            for (const folderName of item.path) {
+                              const found = Object.entries(current.children || {}).find(([k, v]) => v.name === folderName && v.type === "folder");
+                              if (found) {
+                                pathArr.push(found[0]);
+                                current = found[1];
+                              }
+                            }
+                            // Now add the current folder
+                            const found = Object.entries(current.children || {}).find(([k, v]) => v.name === item.name && v.type === "folder");
+                            if (found) {
+                              pathArr.push(found[0]);
+                            }
+                            setCurrentPath(pathArr);
+                          }
+                        }
+                        setSearchQuery("");
+                        setShowDropdown(false);
+                      }}
+                    >
+                      {item.type === "bookmark" ? (
+                        <Star className="w-4 h-4 text-[#bd93f9] flex-shrink-0" />
+                      ) : (
+                        <Folder className="w-4 h-4 text-[#bd93f9] flex-shrink-0" />
+                      )}
+                      <span className="truncate">{item.name}</span>
+                      {item.type === "bookmark" && (
+                        <span className="ml-2 text-xs text-[#7b8bbd] truncate">{item.url}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Path Navigation */}
           <div
-            className="flex items-center space-x-2 mb-4 bg-[#1a2942] p-2 rounded-md overflow-x-auto"
+            className="flex items-center space-x-2 mb-2 bg-[#1a2942] p-2 rounded-md overflow-x-auto flex-shrink-0"
             onDragOver={handleDragOver}
+            style={{ minHeight: '40px' }}
           >
             {pathNames.map((item, index) => (
               <React.Fragment key={item.id}>
@@ -527,7 +650,7 @@ const BookMarks = () => {
           </div>
 
           {/* Content Area */}
-          <div className="flex-grow overflow-y-auto pr-2">
+          <div className="scroll-container flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-2">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
               {/* Folders - Now draggable and droppable */}
               {Object.entries(currentFolder?.children || {})

@@ -26,3 +26,4 @@ dist-ssr
 scrapperServer
 Dev.Home*
 .env
+*.zip
